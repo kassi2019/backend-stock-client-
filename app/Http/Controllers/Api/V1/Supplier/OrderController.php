@@ -3,8 +3,11 @@
 namespace App\Http\Controllers\Api\V1\Supplier;
 
 use App\Http\Controllers\Controller;
+use App\Models\CustomerProduct;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\StockEntry;
+use App\Models\WarehouseStockEntry;
 use App\Notifications\OrderNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -53,7 +56,7 @@ class OrderController extends Controller
         $supplierId = $request->input('_tenant_supplier_id');
 
         $order = Order::forSupplier($supplierId)
-            ->with(['items', 'customer:id,name,phone,address', 'createdBy:id,name'])
+            ->with(['items.product', 'customer:id,name,phone,address', 'createdBy:id,name'])
             ->findOrFail($id);
 
         return response()->json(['order' => $this->formatOrder($order)]);
@@ -138,6 +141,222 @@ class OrderController extends Controller
     }
 
     /**
+     * Livraison (partielle ou totale) saisie par le fournisseur : met à jour
+     * le stock client et l'entrepôt, et suit le reste à livrer par article.
+     * Quand tout est livré, la commande passe à « livrée ».
+     */
+    public function deliver(Request $request, $id)
+    {
+        $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.order_item_id' => 'required|integer',
+            'items.*.quantity' => 'required|numeric|min:0.01',
+        ]);
+
+        $supplierId = $request->input('_tenant_supplier_id');
+
+        $result = DB::transaction(function () use ($request, $supplierId, $id) {
+            $order = Order::forSupplier($supplierId)
+                ->with(['items', 'customer:id,name,owner_user_id'])
+                ->lockForUpdate()
+                ->findOrFail($id);
+
+            if ($order->status !== Order::ACCEPTED) {
+                return response()->json([
+                    'message' => 'La commande doit être acceptée avant toute livraison.',
+                ], 422);
+            }
+
+            $orderItems = $order->items->keyBy('id');
+            $deliveredLines = [];
+
+            foreach ($request->items as $line) {
+                $item = $orderItems->get($line['order_item_id']);
+                if (!$item) {
+                    return response()->json(['message' => 'Article non trouvé dans cette commande.'], 422);
+                }
+
+                $qty = floatval($line['quantity']);
+                $remaining = $item->remainingQuantity();
+                if ($qty > $remaining) {
+                    return response()->json([
+                        'message' => "Quantité trop grande pour « {$item->product_name} » : il reste {$remaining} {$item->unit} à livrer.",
+                    ], 422);
+                }
+
+                // Verrou pour la cohérence du stock client
+                $cp = CustomerProduct::where('id', $item->customer_product_id)
+                    ->where('is_active', true)
+                    ->lockForUpdate()
+                    ->first();
+                if (!$cp) {
+                    return response()->json([
+                        'message' => "Impossible de livrer : le produit « {$item->product_name} » n'est plus disponible.",
+                    ], 422);
+                }
+
+                $cp->initial_stock += $qty;
+                $cp->current_stock += $qty;
+                $cp->last_entry_at = now();
+                $cp->save();
+
+                StockEntry::create([
+                    'customer_product_id' => $cp->id,
+                    'customer_id' => $cp->customer_id,
+                    'supplier_id' => $supplierId,
+                    'quantity' => $qty,
+                    'note' => "Commande #{$order->id} (livraison partielle)",
+                    'entry_type' => 'delivery',
+                    'source' => 'supplier',
+                    'entered_by_user_id' => $request->user()->id,
+                    'entry_date' => now()->toDateString(),
+                ]);
+
+                // Déduire l'entrepôt (jamais bloquant)
+                WarehouseStockEntry::applyDelivery(
+                    $supplierId,
+                    $item->product_id,
+                    $qty,
+                    $request->user()->id,
+                    "Livraison commande #{$order->id} (partielle)",
+                );
+
+                $item->delivered_quantity = bcadd(
+                    (string) $item->delivered_quantity,
+                    number_format($qty, 2, '.', ''),
+                    2,
+                );
+                $item->save();
+
+                $deliveredLines[] = ['item' => $item->fresh(), 'qty' => $qty];
+            }
+
+            // Tout livré → commande terminée
+            if ($order->items->every(fn($it) => $it->remainingQuantity() <= 0)) {
+                $order->transitionTo(Order::DELIVERED, $request->user());
+            }
+
+            return ['order' => $order, 'lines' => $deliveredLines];
+        });
+
+        if ($result instanceof \Illuminate\Http\JsonResponse) {
+            return $result;
+        }
+
+        ['order' => $order, 'lines' => $lines] = $result;
+
+        // Notifier le client
+        $owner = $order->customer?->owner;
+        if ($owner) {
+            if ($order->status === Order::DELIVERED) {
+                $owner->notify(new OrderNotification(
+                    'order_delivered',
+                    $order->id,
+                    "Commande #{$order->id} livrée",
+                    'Votre commande a été entièrement livrée par le fournisseur.',
+                ));
+            } else {
+                $summary = implode(', ', array_map(
+                    fn($l) => "{$l['qty']} {$l['item']->unit} de « {$l['item']->product_name} »",
+                    $lines,
+                ));
+                $remainingTotal = $order->items->sum(fn($it) => $it->remainingQuantity());
+                $owner->notify(new OrderNotification(
+                    'order_partial_delivery',
+                    $order->id,
+                    "Livraison partielle — Commande #{$order->id}",
+                    "Le fournisseur vous a livré : {$summary}. Il reste {$remainingTotal} unité(s) à livrer.",
+                ));
+            }
+        }
+
+        return response()->json([
+            'message' => 'Livraison enregistrée.',
+            'order' => $this->formatOrder($order),
+        ]);
+    }
+
+    /**
+     * Restes à livrer : commandes acceptées ayant des livraisons partielles
+     * en cours (au moins un article partiellement livré).
+     * Déclaré avant la route {order} pour éviter le conflit de binding.
+     */
+    public function pendingDeliveries(Request $request)
+    {
+        $supplierId = $request->input('_tenant_supplier_id');
+
+        $orders = Order::forSupplier($supplierId)
+            ->where('status', Order::ACCEPTED)
+            ->with(['items', 'customer:id,name,phone'])
+            ->whereHas('items', function ($q) {
+                $q->whereRaw('delivered_quantity > 0')
+                    ->whereRaw('quantity > delivered_quantity');
+            })
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        $pending = $orders->map(function ($order) {
+            $items = $order->items
+                ->filter(fn($it) => $it->remainingQuantity() > 0)
+                ->map(fn($it) => [
+                    'order_item_id' => $it->id,
+                    'product_name' => $it->product_name,
+                    'unit' => $it->unit,
+                    'ordered' => floatval($it->quantity),
+                    'delivered' => floatval($it->delivered_quantity),
+                    'remaining' => $it->remainingQuantity(),
+                ])
+                ->values();
+
+            return [
+                'order_id' => $order->id,
+                'customer_name' => $order->customer?->name,
+                'created_at' => $order->created_at?->toISOString(),
+                'items' => $items,
+            ];
+        })->values();
+
+        return response()->json([
+            'pending' => $pending,
+            'total' => $pending->sum(fn($o) => $o['items']->count()),
+        ]);
+    }
+
+    /**
+     * Message du fournisseur au client sur une commande (ex. : stock
+     * insuffisant, délai de réapprovisionnement). La réponse du client se
+     * fait par téléphone.
+     */
+    public function message(Request $request, $id)
+    {
+        $request->validate([
+            'message' => 'required|string|min:3|max:1000',
+        ]);
+
+        $supplierId = $request->input('_tenant_supplier_id');
+
+        $order = Order::forSupplier($supplierId)->findOrFail($id);
+
+        if (in_array($order->status, [Order::REJECTED, Order::CANCELLED], true)) {
+            return response()->json([
+                'message' => 'Cette commande ne peut plus recevoir de message.',
+            ], 422);
+        }
+
+        $order->customer?->owner?->notify(new OrderNotification(
+            'order_message',
+            $order->id,
+            "Message du fournisseur — Commande #{$order->id}",
+            $request->message,
+        ));
+
+        return response()->json([
+            'message' => 'Message envoyé au client.',
+            'order' => $this->formatOrder($order),
+        ]);
+    }
+
+    /**
      * Représentation JSON commune d'une commande (vue fournisseur).
      */
     private function formatOrder(Order $order): array
@@ -181,6 +400,11 @@ class OrderController extends Controller
             'quantity' => floatval($item->quantity),
             'unit_price' => $item->unit_price === null ? null : floatval($item->unit_price),
             'line_total' => $lineTotal,
+            'warehouse_stock' => $item->product ? floatval($item->product->stock_quantity) : null,
+            'warehouse_insufficient' => $item->product
+                && floatval($item->quantity) > floatval($item->product->stock_quantity),
+            'delivered_quantity' => floatval($item->delivered_quantity),
+            'remaining' => $item->remainingQuantity(),
         ];
     }
 

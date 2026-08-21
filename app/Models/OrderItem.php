@@ -16,13 +16,23 @@ class OrderItem extends Model
         'product_name',
         'unit',
         'quantity',
+        'delivered_quantity',
         'unit_price',
     ];
 
     protected $casts = [
         'quantity' => 'decimal:2',
+        'delivered_quantity' => 'decimal:2',
         'unit_price' => 'decimal:2',
     ];
+
+    /**
+     * Quantité restant à livrer pour cet article.
+     */
+    public function remainingQuantity(): float
+    {
+        return max(0, floatval($this->quantity) - floatval($this->delivered_quantity));
+    }
 
     // --- Relations ---
 

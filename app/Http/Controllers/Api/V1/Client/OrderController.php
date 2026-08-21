@@ -9,6 +9,7 @@ use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\StockEntry;
 use App\Models\Supplier;
+use App\Models\WarehouseStockEntry;
 use App\Notifications\OrderNotification;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -246,7 +247,17 @@ class OrderController extends Controller
                 ], 422);
             }
 
+            $deliveredAny = false;
+
             foreach ($order->items as $item) {
+                // Après une livraison partielle du fournisseur, seule la
+                // quantité restante est ajoutée (pas la quantité totale).
+                $remaining = $item->remainingQuantity();
+                if ($remaining <= 0) {
+                    continue;
+                }
+                $deliveredAny = true;
+
                 $cp = CustomerProduct::where('id', $item->customer_product_id)
                     ->where('is_active', true)
                     ->lockForUpdate()
@@ -258,8 +269,8 @@ class OrderController extends Controller
                     ], 422);
                 }
 
-                $cp->initial_stock += $item->quantity;
-                $cp->current_stock += $item->quantity;
+                $cp->initial_stock += $remaining;
+                $cp->current_stock += $remaining;
                 $cp->last_entry_at = now();
                 $cp->save();
 
@@ -267,13 +278,35 @@ class OrderController extends Controller
                     'customer_product_id' => $cp->id,
                     'customer_id' => $customerId,
                     'supplier_id' => $supplierId,
-                    'quantity' => $item->quantity,
+                    'quantity' => $remaining,
                     'note' => "Commande #{$order->id}",
                     'entry_type' => 'delivery',
                     'source' => 'supplier',
                     'entered_by_user_id' => $request->user()->id,
                     'entry_date' => now()->toDateString(),
                 ]);
+
+                // Déduire la quantité du stock entrepôt (jamais bloquant)
+                WarehouseStockEntry::applyDelivery(
+                    $supplierId,
+                    $cp->product_id,
+                    $remaining,
+                    $request->user()->id,
+                    "Livraison commande #{$order->id}",
+                );
+
+                $item->delivered_quantity = bcadd(
+                    (string) $item->delivered_quantity,
+                    number_format($remaining, 2, '.', ''),
+                    2,
+                );
+                $item->save();
+            }
+
+            if (!$deliveredAny) {
+                return response()->json([
+                    'message' => 'Cette commande est déjà entièrement livrée.',
+                ], 422);
             }
 
             $order->transitionTo(Order::DELIVERED, $request->user());
@@ -340,6 +373,8 @@ class OrderController extends Controller
             'quantity' => floatval($item->quantity),
             'unit_price' => $item->unit_price === null ? null : floatval($item->unit_price),
             'line_total' => $lineTotal,
+            'delivered_quantity' => floatval($item->delivered_quantity),
+            'remaining' => $item->remainingQuantity(),
         ];
     }
 

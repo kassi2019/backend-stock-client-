@@ -17,12 +17,16 @@ class Product extends Model
         'unit',
         'category',
         'price',
+        'stock_quantity',
+        'stock_threshold',
         'is_active',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'price' => 'decimal:2',
+        'stock_quantity' => 'decimal:2',
+        'stock_threshold' => 'decimal:2',
     ];
 
     // --- Scopes ---
@@ -42,5 +46,10 @@ class Product extends Model
     public function customerProducts()
     {
         return $this->hasMany(CustomerProduct::class);
+    }
+
+    public function warehouseStockEntries()
+    {
+        return $this->hasMany(WarehouseStockEntry::class);
     }
 }

@@ -39,6 +39,10 @@ class ProductNotification extends Notification
         $symbol = $symbol ?: '€';
         $position = $position ?: 'after';
         $formatted = number_format($price, 2, ',', ' ');
+        // Retire le « ,00 » des montants entiers (ex. 12 au lieu de 12,00)
+        if (str_ends_with($formatted, ',00')) {
+            $formatted = substr($formatted, 0, -3);
+        }
 
         return $position === 'before'
             ? "{$symbol} {$formatted}"

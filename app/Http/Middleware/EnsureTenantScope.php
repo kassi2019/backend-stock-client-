@@ -20,7 +20,7 @@ class EnsureTenantScope
         }
 
         // L'admin a une vue globale (sauf s'il est en mode client/fournisseur)
-        if ($user->isSuperAdmin() && !session('active_mode')) {
+        if ($user->isAdmin() && !session('active_mode')) {
             return $next($request);
         }
 

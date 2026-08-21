@@ -5,6 +5,7 @@
 /public/storage
 /public/avatars
 /storage/*.key
+/storage/keys/
 /vendor
 .env
 .env.backup

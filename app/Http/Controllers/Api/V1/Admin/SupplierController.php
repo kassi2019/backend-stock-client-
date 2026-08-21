@@ -86,4 +86,31 @@ class SupplierController extends Controller
 
         return response()->json($supplier);
     }
+
+    /**
+     * Réinitialiser le mot de passe du propriétaire d'un fournisseur.
+     */
+    public function resetPassword(Request $request, $id)
+    {
+        $request->validate([
+            'password' => 'required|string|min:6',
+        ]);
+
+        $supplier = Supplier::with('owner')->findOrFail($id);
+        $owner = $supplier->owner;
+
+        if (!$owner) {
+            return response()->json(['message' => 'Ce fournisseur n\'a pas de compte propriétaire.'], 422);
+        }
+
+        // Le cast 'hashed' du modèle User hache automatiquement
+        $owner->update(['password' => $request->password]);
+        $owner->tokens()->delete(); // déconnecte tous ses appareils
+
+        return response()->json([
+            'message' => 'Mot de passe réinitialisé.',
+            'login' => $owner->phone,
+            'password' => $request->password,
+        ]);
+    }
 }

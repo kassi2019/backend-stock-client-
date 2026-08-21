@@ -3,10 +3,13 @@
 namespace App\Http\Controllers\Api\V1\Supplier;
 
 use App\Http\Controllers\Controller;
+use App\Models\CustomerProduct;
 use App\Models\Product;
+use App\Models\StockAlert;
 use App\Models\Supplier;
 use App\Notifications\ProductNotification;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ProductController extends Controller
 {
@@ -15,9 +18,21 @@ class ProductController extends Controller
         $supplierId = $request->input('_tenant_supplier_id');
         $supplier = Supplier::find($supplierId);
 
+        // Total déjà attribué aux clients (rattachements + MAJ livraisons)
+        $distributed = CustomerProduct::where('supplier_id', $supplierId)
+            ->groupBy('product_id')
+            ->selectRaw('product_id, COALESCE(SUM(initial_stock), 0) as total')
+            ->pluck('total', 'product_id');
+
         $products = Product::forSupplier($supplierId)
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->map(function ($p) use ($distributed) {
+                // Reste distribuable : stock entrepôt − total déjà donné aux clients
+                $remaining = floatval($p->stock_quantity ?? 0) - floatval($distributed[$p->id] ?? 0);
+                $p->remaining_stock = max(0, $remaining);
+                return $p;
+            });
 
         return response()->json([
             'products' => $products,
@@ -48,6 +63,7 @@ class ProductController extends Controller
             'sku' => 'nullable|string|max:100',
             'category' => 'nullable|string|max:100',
             'price' => 'nullable|numeric|min:0|max:99999999.99',
+            'stock_threshold' => 'nullable|numeric|min:0|max:99999999.99',
         ]);
 
         $product = Product::create([
@@ -57,7 +73,16 @@ class ProductController extends Controller
             'sku' => $request->sku,
             'category' => $request->category,
             'price' => $request->price,
+            'stock_threshold' => $request->stock_threshold,
         ]);
+
+        // Produit créé avec un seuil (stock 0) : alerte immédiate
+        if ($product->stock_threshold !== null) {
+            DB::transaction(function () use ($product) {
+                $locked = Product::where('id', $product->id)->lockForUpdate()->first();
+                StockAlert::syncWarehouseAlert($locked);
+            });
+        }
 
         // Nouveau produit au catalogue (avec prix) : notifier tous les clients
         if ($request->price !== null) {
@@ -92,6 +117,7 @@ class ProductController extends Controller
             'sku' => 'nullable|string|max:100',
             'category' => 'nullable|string|max:100',
             'price' => 'nullable|numeric|min:0|max:99999999.99',
+            'stock_threshold' => 'nullable|numeric|min:0|max:99999999.99',
             'is_active' => 'sometimes|boolean',
         ]);
 
@@ -100,7 +126,19 @@ class ProductController extends Controller
         $newPrice = $request->input('price') === null ? null : floatval($request->input('price'));
         $priceChanged = $oldPrice !== $newPrice;
 
-        $product->update($request->only(['name', 'unit', 'sku', 'category', 'price', 'is_active']));
+        $oldThreshold = $product->stock_threshold === null ? null : floatval($product->stock_threshold);
+        $newThreshold = $request->input('stock_threshold') === null ? null : floatval($request->input('stock_threshold'));
+        $thresholdChanged = $oldThreshold !== $newThreshold;
+
+        $product->update($request->only(['name', 'unit', 'sku', 'category', 'price', 'stock_threshold', 'is_active']));
+
+        // Seuil modifié : recalculer l'alerte entrepôt
+        if ($thresholdChanged) {
+            DB::transaction(function () use ($product) {
+                $locked = Product::where('id', $product->id)->lockForUpdate()->first();
+                StockAlert::syncWarehouseAlert($locked);
+            });
+        }
 
         // Changement de prix sur un produit visible : notifier tous les clients
         if ($priceChanged && $product->is_active) {
@@ -144,6 +182,12 @@ class ProductController extends Controller
     {
         $supplierId = $request->input('_tenant_supplier_id');
         $product = Product::forSupplier($supplierId)->findOrFail($id);
+
+        // Résoudre les alertes entrepôt ouvertes pour éviter des alertes fantômes
+        StockAlert::where('product_id', $product->id)
+            ->whereNull('resolved_at')
+            ->update(['resolved_at' => now()]);
+
         $product->delete();
 
         return response()->json(['message' => 'Produit supprimé.']);

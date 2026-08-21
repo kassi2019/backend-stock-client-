@@ -27,6 +27,10 @@ class Plan extends Model
     public function formattedPrice(): string
     {
         $price = number_format($this->monthly_price, 2, ',', ' ');
+        // Retire le « ,00 » des montants entiers (ex. 12 au lieu de 12,00)
+        if (str_ends_with($price, ',00')) {
+            $price = substr($price, 0, -3);
+        }
         $symbol = $this->currency_symbol ?? '€';
 
         if ($this->monthly_price == 0) {

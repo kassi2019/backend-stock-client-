@@ -50,13 +50,24 @@ class DashboardController extends Controller
                 ];
             })->values();
 
-        // Alertes non résolues
-        $alerts = StockAlert::with('customerProduct.product', 'customerProduct.customer')
+        // Alertes non résolues (stock entrepôt + stock clients)
+        $alerts = StockAlert::with('product', 'customerProduct.product', 'customerProduct.customer')
             ->forSupplier($supplierId)
             ->unresolved()
             ->orderBy('created_at', 'desc')
             ->limit(20)
-            ->get();
+            ->get()
+            ->map(function ($a) {
+                return [
+                    'id' => $a->id,
+                    'type' => $a->type,
+                    'severity' => $a->severity,
+                    'message' => $a->message,
+                    'kind' => $a->product_id ? 'warehouse' : 'customer',
+                    'product_name' => $a->product?->name ?? $a->customerProduct?->product?->name,
+                    'created_at' => $a->created_at?->toISOString(),
+                ];
+            });
 
         // Compteurs
         $totalCustomers = \App\Models\Customer::forSupplier($supplierId)->where('is_active', true)->count();
@@ -66,12 +77,32 @@ class DashboardController extends Controller
             ->whereNotNull('reorder_point')
             ->whereRaw('current_stock <= reorder_point')
             ->count();
+        $warehouseLowCount = \App\Models\Product::forSupplier($supplierId)
+            ->where('is_active', true)
+            ->whereNotNull('stock_threshold')
+            ->whereRaw('stock_quantity <= stock_threshold')
+            ->count();
+        $warehouseNegativeCount = \App\Models\Product::forSupplier($supplierId)
+            ->where('is_active', true)
+            ->whereRaw('stock_quantity < 0')
+            ->count();
+        $pendingDeliveriesCount = \App\Models\Order::forSupplier($supplierId)
+            ->where('status', \App\Models\Order::ACCEPTED)
+            ->whereHas('items', function ($q) {
+                $q->whereRaw('delivered_quantity > 0')
+                    ->whereRaw('quantity > delivered_quantity');
+            })
+            ->count();
 
         return response()->json([
             'summary' => [
                 'total_customers' => $totalCustomers,
                 'total_products' => $totalProducts,
                 'low_stock_count' => $lowStockCount,
+                'warehouse_low_count' => $warehouseLowCount,
+                'warehouse_negative_count' => $warehouseNegativeCount,
+                'warehouse_products_count' => $totalProducts,
+                'pending_deliveries_count' => $pendingDeliveriesCount,
             ],
             'subscription' => $supplier ? $supplier->quotaInfo() : null,
             'stocks' => $stocks,

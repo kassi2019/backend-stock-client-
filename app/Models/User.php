@@ -71,6 +71,14 @@ class User extends Authenticatable
     }
 
     /**
+     * Vérifie si l'utilisateur est un admin plateforme (principal ou secondaire)
+     */
+    public function isAdmin(): bool
+    {
+        return $this->isSuperAdmin() || $this->hasRole('admin');
+    }
+
+    /**
      * Vérifie si l'utilisateur est un fournisseur (owner ou staff)
      */
     public function isSupplier(): bool
@@ -91,7 +99,7 @@ class User extends Authenticatable
      */
     public function getSupplierId(): ?int
     {
-        if ($this->isSuperAdmin()) {
+        if ($this->isAdmin()) {
             return null; // admin a accès à tout
         }
         if ($this->ownedSupplier) {

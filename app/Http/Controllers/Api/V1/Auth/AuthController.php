@@ -80,8 +80,8 @@ class AuthController extends Controller
         // Lister tous les modes disponibles
         $modes = [];
 
-        // Mode admin
-        if ($user->isSuperAdmin()) {
+        // Mode admin (principal ou secondaire)
+        if ($user->isAdmin()) {
             $modes[] = [
                 'mode' => 'super_admin',
                 'label' => 'Administrateur',
@@ -182,7 +182,7 @@ class AuthController extends Controller
         $mode = $request->mode;
 
         // Vérifier que l'utilisateur a bien accès à ce mode
-        if ($mode === 'super_admin' && !$user->isSuperAdmin()) {
+        if ($mode === 'super_admin' && !$user->isAdmin()) {
             return response()->json(['message' => 'Accès refusé.'], 403);
         }
 
@@ -209,7 +209,7 @@ class AuthController extends Controller
 
     private function getAbilitiesForUser(User $user): array
     {
-        if ($user->isSuperAdmin()) {
+        if ($user->isAdmin()) {
             return ['admin', 'supplier:read', 'supplier:write', 'client:read', 'client:write'];
         }
 
