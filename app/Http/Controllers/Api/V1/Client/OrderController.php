@@ -177,7 +177,7 @@ class OrderController extends Controller
         $customerId = $request->input('_tenant_customer_id');
 
         $orders = Order::forCustomer($customerId)
-            ->with(['items', 'supplier:id,name'])
+            ->with(['items.product', 'supplier:id,name'])
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->orderBy('created_at', 'desc')
             ->paginate(50);
@@ -193,7 +193,7 @@ class OrderController extends Controller
         $customerId = $request->input('_tenant_customer_id');
 
         $order = Order::forCustomer($customerId)
-            ->with(['items', 'supplier:id,name'])
+            ->with(['items.product', 'supplier:id,name'])
             ->findOrFail($id);
 
         return response()->json(['order' => $this->formatOrder($order)]);
@@ -370,6 +370,7 @@ class OrderController extends Controller
             'id' => $item->id,
             'product_name' => $item->product_name,
             'unit' => $item->unit,
+            'image_path' => $item->product?->image_path,
             'quantity' => floatval($item->quantity),
             'unit_price' => $item->unit_price === null ? null : floatval($item->unit_price),
             'line_total' => $lineTotal,

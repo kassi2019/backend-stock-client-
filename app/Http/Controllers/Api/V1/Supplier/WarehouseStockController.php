@@ -25,11 +25,19 @@ class WarehouseStockController extends Controller
         $openAlerts = StockAlert::forSupplier($supplierId)
             ->where('type', 'warehouse_stock')
             ->unresolved()
-            ->with('product:id,name,unit')
+            ->with('product:id,name,unit,image_path')
             ->orderBy('created_at', 'desc')
             ->get();
 
-        $items = $products->map(function ($p) {
+        // Ventes comptoir du jour, par produit (pour l'écran Vente comptoir)
+        $soldToday = WarehouseStockEntry::where('supplier_id', $supplierId)
+            ->where('entry_type', 'sale')
+            ->whereDate('entry_date', now()->toDateString())
+            ->groupBy('product_id')
+            ->selectRaw('product_id, ABS(COALESCE(SUM(quantity), 0)) as total')
+            ->pluck('total', 'product_id');
+
+        $items = $products->map(function ($p) use ($soldToday) {
             $stock = floatval($p->stock_quantity);
             $threshold = $p->stock_threshold === null ? null : floatval($p->stock_threshold);
             return [
@@ -37,7 +45,10 @@ class WarehouseStockController extends Controller
                 'name' => $p->name,
                 'unit' => $p->unit,
                 'sku' => $p->sku,
+                'image_path' => $p->image_path,
                 'stock_quantity' => $stock,
+                'sold_today' => floatval($soldToday[$p->id] ?? 0),
+                'pack_size' => $p->pack_size,
                 'stock_threshold' => $threshold,
                 'is_low' => $threshold !== null && $stock <= $threshold,
                 'is_negative' => $stock < 0,
@@ -56,6 +67,7 @@ class WarehouseStockController extends Controller
                 'severity' => $a->severity,
                 'message' => $a->message,
                 'product_name' => $a->product?->name,
+                'image_path' => $a->product?->image_path,
                 'created_at' => $a->created_at?->toISOString(),
             ]),
         ]);
@@ -70,18 +82,27 @@ class WarehouseStockController extends Controller
 
         $request->validate([
             'quantity' => 'required|numeric|gt:0|max:99999999.99',
+            'in_packs' => 'nullable|boolean',
             'note' => 'nullable|string|max:500',
         ]);
 
-        Product::forSupplier($supplierId)->findOrFail($productId);
+        $product = Product::forSupplier($supplierId)->findOrFail($productId);
 
-        $product = DB::transaction(function () use ($supplierId, $productId, $request) {
+        $inPacks = $request->boolean('in_packs');
+        $quantity = $inPacks
+            ? $product->toBaseUnits(floatval($request->quantity))
+            : floatval($request->quantity);
+        $note = $inPacks
+            ? sprintf('Réception manuelle (%s paquets de %s)', $request->quantity, $product->pack_size)
+            : ($request->note ?: 'Réception manuelle');
+
+        $product = DB::transaction(function () use ($supplierId, $productId, $request, $quantity, $note) {
             return WarehouseStockEntry::applyReceipt(
                 $supplierId,
                 (int) $productId,
-                floatval($request->quantity),
+                $quantity,
                 $request->user()->id,
-                $request->note ?: 'Réception manuelle',
+                $note,
             );
         });
 

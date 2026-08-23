@@ -7,18 +7,23 @@ use App\Models\CustomerProduct;
 use App\Models\StockEntry;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class StockEntryController extends Controller
 {
     /**
-     * Saisie de la quantité vendue par le client final.
-     * Le backend calcule le nouveau stock restant.
+     * Saisie de la vente par le client final, selon deux modes :
+     * - le client connaît la quantité vendue  → sold_quantity,
+     *   le backend calcule le nouveau stock restant ;
+     * - le client connaît la quantité restante → remaining_quantity,
+     *   le backend calcule le vendu (stock actuel - restant).
      */
     public function store(Request $request)
     {
         $request->validate([
             'customer_product_id' => 'required|integer',
-            'sold_quantity' => 'required|numeric|min:0',
+            'sold_quantity' => 'required_without:remaining_quantity|nullable|numeric|min:0',
+            'remaining_quantity' => 'required_without:sold_quantity|nullable|numeric|min:0',
             'note' => 'nullable|string|max:255',
         ]);
 
@@ -34,8 +39,31 @@ class StockEntryController extends Controller
             return response()->json(['message' => 'Produit non trouvé.'], 404);
         }
 
-        $sold = $request->sold_quantity;
-        $newStock = max(0, $customerProduct->current_stock - $sold);
+        if ($request->filled('remaining_quantity')) {
+            $remaining = (float) $request->remaining_quantity;
+
+            if ($remaining > $customerProduct->current_stock) {
+                throw ValidationException::withMessages([
+                    'remaining_quantity' => [
+                        'La quantité restante saisie est supérieure au stock actuel (' . $customerProduct->current_stock . ').',
+                    ],
+                ]);
+            }
+
+            $sold = max(0, $customerProduct->current_stock - $remaining);
+            if ($sold <= 0) {
+                throw ValidationException::withMessages([
+                    'remaining_quantity' => [
+                        'La quantité restante saisie est égale au stock actuel : aucune vente à enregistrer.',
+                    ],
+                ]);
+            }
+
+            $newStock = $remaining;
+        } else {
+            $sold = (float) $request->sold_quantity;
+            $newStock = max(0, $customerProduct->current_stock - $sold);
+        }
 
         DB::transaction(function () use ($customerProduct, $customerId, $supplierId, $sold, $newStock, $request) {
             // Enregistrer la vente (quantity = quantité vendue)

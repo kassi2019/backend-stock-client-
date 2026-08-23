@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\Admin\AdminController as AdminAdminController;
 use App\Http\Controllers\Api\V1\Supplier\NotificationController;
 use App\Http\Controllers\Api\V1\Supplier\OrderController as SupplierOrderController;
 use App\Http\Controllers\Api\V1\Supplier\ResubscribeController;
+use App\Http\Controllers\Api\V1\Supplier\WalkInSaleController;
 
 /*
 |--------------------------------------------------------------------------
@@ -114,6 +115,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
         Route::post('/warehouse-stock/{product}/receive', [SupplierWarehouseStockController::class, 'receive']);
         Route::post('/warehouse-stock/{product}/adjust', [SupplierWarehouseStockController::class, 'adjust']);
         Route::get('/warehouse-stock/{product}/history', [SupplierWarehouseStockController::class, 'history']);
+        Route::post('/walk-in-sales', [WalkInSaleController::class, 'store']);
 
         // Commandes (pending-count et pending-deliveries AVANT {order} pour éviter le conflit de binding)
         Route::get('/orders/pending-count', [SupplierOrderController::class, 'pendingCount']);

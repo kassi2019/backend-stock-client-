@@ -25,6 +25,7 @@ class DashboardController extends Controller
                     'id' => $cp->id,
                     'product_name' => $cp->product->name,
                     'unit' => $cp->product->unit,
+                    'image_path' => $cp->product->image_path,
                     'initial_stock' => $cp->initial_stock,
                     'current_stock' => $cp->current_stock,
                     'last_entry_at' => $cp->last_entry_at,

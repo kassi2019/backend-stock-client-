@@ -12,6 +12,7 @@ use App\Models\WarehouseStockEntry;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 
 class CustomerController extends Controller
@@ -195,6 +196,7 @@ class CustomerController extends Controller
             'products' => 'required|array|min:1',
             'products.*.product_id' => 'required|integer|distinct',
             'products.*.initial_stock' => 'required|numeric|min:0',
+            'products.*.in_packs' => 'nullable|boolean',
             'products.*.reorder_point' => 'nullable|numeric|min:0',
         ]);
 
@@ -215,11 +217,27 @@ class CustomerController extends Controller
             ->whereIn('product_id', $validIds)
             ->pluck('product_id')->all();
 
+        // Conversion paquets → unités de base (le produit doit avoir un pack_size)
+        $names = Product::whereIn('id', $validIds)->pluck('name', 'id');
+        $packSizes = Product::whereIn('id', $validIds)->pluck('pack_size', 'id');
+        $normalized = collect($request->products)->map(function ($p) use ($packSizes, $names) {
+            $qty = floatval($p['initial_stock']);
+            if (!empty($p['in_packs'])) {
+                $size = intval($packSizes[$p['product_id']] ?? 0);
+                if ($size < 2) {
+                    throw ValidationException::withMessages([
+                        'products' => ["« {$names[$p['product_id']]} » n'a pas de conditionnement en paquets défini."],
+                    ]);
+                }
+                $qty = $qty * $size;
+            }
+            return array_merge($p, ['initial_stock' => $qty]);
+        });
+
         // Ne pas distribuer plus que le stock disponible (uniquement pour
         // les produits réellement à rattacher, pas ceux déjà rattachés)
         $remaining = $this->remainingForProducts($supplierId, $validIds);
-        $names = Product::whereIn('id', $validIds)->pluck('name', 'id');
-        foreach ($request->products as $p) {
+        foreach ($normalized as $p) {
             if (in_array($p['product_id'], $existing)) continue;
             $limit = $remaining[$p['product_id']];
             if ($p['initial_stock'] > $limit) {
@@ -229,7 +247,7 @@ class CustomerController extends Controller
             }
         }
 
-        $rows = collect($request->products)
+        $rows = $normalized
             ->filter(fn ($p) => !in_array($p['product_id'], $existing))
             ->map(fn ($p) => [
                 'customer_id' => $customerId,
@@ -283,6 +301,7 @@ class CustomerController extends Controller
 
         $request->validate([
             'delivery_qty' => 'required|numeric|min:0.01',
+            'in_packs' => 'nullable|boolean',
             'reorder_point' => 'nullable|numeric|min:0',
         ]);
 
@@ -293,6 +312,10 @@ class CustomerController extends Controller
                 ->firstOrFail();
 
             $qty = $request->delivery_qty;
+            // Livraison saisie en paquets : conversion vers l'unité de base
+            if ($request->boolean('in_packs')) {
+                $qty = $cp->product->toBaseUnits(floatval($qty));
+            }
             $cp->initial_stock += $qty;
             $cp->current_stock += $qty;
 

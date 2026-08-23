@@ -66,6 +66,61 @@ class ClientStockEntryTest extends TestCase
         ]);
     }
 
+    /** Mode restant : le client saisit ce qui reste, le vendu est calculé. */
+    public function test_remaining_mode_computes_sold_quantity(): void
+    {
+        Sanctum::actingAs($this->clientUser);
+        $res = $this->postJson('/api/v1/client/stock-entries', [
+            'customer_product_id' => $this->cp->id,
+            'remaining_quantity' => 40,
+        ])->assertStatus(201);
+
+        $res->assertJsonPath('sold', 40)
+            ->assertJsonPath('current_stock', 40);
+
+        $this->assertEquals(40.0, floatval($this->cp->fresh()->current_stock));
+
+        // La vente calculée est bien enregistrée dans l'historique
+        $entry = StockEntry::first();
+        $this->assertEquals(40.0, floatval($entry->quantity));
+        $this->assertSame('declared', $entry->entry_type);
+    }
+
+    /** Mode restant : saisie incohérente (restant > stock connu) → bloquée. */
+    public function test_remaining_mode_rejects_value_above_current_stock(): void
+    {
+        Sanctum::actingAs($this->clientUser);
+        $this->postJson('/api/v1/client/stock-entries', [
+            'customer_product_id' => $this->cp->id,
+            'remaining_quantity' => 95, // stock connu : 80
+        ])->assertStatus(422);
+
+        // Aucune vente enregistrée, stock inchangé
+        $this->assertDatabaseCount('stock_entries', 0);
+        $this->assertEquals(80.0, floatval($this->cp->fresh()->current_stock));
+    }
+
+    /** Mode restant : restant égal au stock connu → aucune vente à enregistrer. */
+    public function test_remaining_mode_rejects_value_equal_to_current_stock(): void
+    {
+        Sanctum::actingAs($this->clientUser);
+        $this->postJson('/api/v1/client/stock-entries', [
+            'customer_product_id' => $this->cp->id,
+            'remaining_quantity' => 80,
+        ])->assertStatus(422);
+
+        $this->assertDatabaseCount('stock_entries', 0);
+    }
+
+    /** Aucun des deux champs fourni → erreur de validation. */
+    public function test_requires_sold_or_remaining_quantity(): void
+    {
+        Sanctum::actingAs($this->clientUser);
+        $this->postJson('/api/v1/client/stock-entries', [
+            'customer_product_id' => $this->cp->id,
+        ])->assertStatus(422);
+    }
+
     /** Le client corrige une vente : la quantité est ré-ajoutée au stock. */
     public function test_client_can_correct_own_sale_entry(): void
     {

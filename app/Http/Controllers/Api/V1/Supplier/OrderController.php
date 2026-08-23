@@ -287,7 +287,7 @@ class OrderController extends Controller
 
         $orders = Order::forSupplier($supplierId)
             ->where('status', Order::ACCEPTED)
-            ->with(['items', 'customer:id,name,phone'])
+            ->with(['items.product', 'customer:id,name,phone'])
             ->whereHas('items', function ($q) {
                 $q->whereRaw('delivered_quantity > 0')
                     ->whereRaw('quantity > delivered_quantity');
@@ -302,6 +302,7 @@ class OrderController extends Controller
                     'order_item_id' => $it->id,
                     'product_name' => $it->product_name,
                     'unit' => $it->unit,
+                    'image_path' => $it->product?->image_path,
                     'ordered' => floatval($it->quantity),
                     'delivered' => floatval($it->delivered_quantity),
                     'remaining' => $it->remainingQuantity(),
@@ -397,6 +398,7 @@ class OrderController extends Controller
             'id' => $item->id,
             'product_name' => $item->product_name,
             'unit' => $item->unit,
+            'image_path' => $item->product?->image_path,
             'quantity' => floatval($item->quantity),
             'unit_price' => $item->unit_price === null ? null : floatval($item->unit_price),
             'line_total' => $lineTotal,

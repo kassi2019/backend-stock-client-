@@ -10,6 +10,8 @@ use App\Models\Supplier;
 use App\Notifications\ProductNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class ProductController extends Controller
 {
@@ -64,6 +66,22 @@ class ProductController extends Controller
             'category' => 'nullable|string|max:100',
             'price' => 'nullable|numeric|min:0|max:99999999.99',
             'stock_threshold' => 'nullable|numeric|min:0|max:99999999.99',
+            'pack_size' => 'nullable|integer|min:2|max:10000',
+            'image' => ['nullable', function ($attribute, $value, $fail) {
+                if (is_array($value) || !($value instanceof \Illuminate\Http\UploadedFile)) {
+                    $fail("L'image n'a pas été envoyée correctement. Rechargez l'application (touche R dans le terminal Expo, ou fermez et rouvrez l'app).");
+                    return;
+                }
+                if ($value->getSize() > 5 * 1024 * 1024) {
+                    $fail('La photo ne doit pas dépasser 5 Mo.');
+                    return;
+                }
+                $allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif', 'image/bmp'];
+                if (!in_array($value->getMimeType(), $allowedMimes, true)) {
+                    $fail("Le fichier envoyé n'est pas une image valide (JPG/JPEG, PNG, WebP, AVIF, GIF ou BMP acceptés). Si votre fichier est un SVG ou un fichier renommé, convertissez-le d'abord en photo.");
+                }
+            }],
+            'image_base64' => 'nullable|string',
         ]);
 
         $product = Product::create([
@@ -74,7 +92,17 @@ class ProductController extends Controller
             'category' => $request->category,
             'price' => $request->price,
             'stock_threshold' => $request->stock_threshold,
+            'pack_size' => $request->pack_size,
         ]);
+
+        // Photo du produit (optionnelle) : fichier multipart ou base64 (mobile)
+        try {
+            $this->storeProductImage($request, $product);
+        } catch (ValidationException $e) {
+            // Photo invalide : annuler aussi la création du produit
+            $product->forceDelete();
+            throw $e;
+        }
 
         // Produit créé avec un seuil (stock 0) : alerte immédiate
         if ($product->stock_threshold !== null) {
@@ -118,7 +146,23 @@ class ProductController extends Controller
             'category' => 'nullable|string|max:100',
             'price' => 'nullable|numeric|min:0|max:99999999.99',
             'stock_threshold' => 'nullable|numeric|min:0|max:99999999.99',
+            'pack_size' => 'nullable|integer|min:2|max:10000',
             'is_active' => 'sometimes|boolean',
+            'image' => ['nullable', function ($attribute, $value, $fail) {
+                if (is_array($value) || !($value instanceof \Illuminate\Http\UploadedFile)) {
+                    $fail("L'image n'a pas été envoyée correctement. Rechargez l'application (touche R dans le terminal Expo, ou fermez et rouvrez l'app).");
+                    return;
+                }
+                if ($value->getSize() > 5 * 1024 * 1024) {
+                    $fail('La photo ne doit pas dépasser 5 Mo.');
+                    return;
+                }
+                $allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif', 'image/bmp'];
+                if (!in_array($value->getMimeType(), $allowedMimes, true)) {
+                    $fail("Le fichier envoyé n'est pas une image valide (JPG/JPEG, PNG, WebP, AVIF, GIF ou BMP acceptés). Si votre fichier est un SVG ou un fichier renommé, convertissez-le d'abord en photo.");
+                }
+            }],
+            'image_base64' => 'nullable|string',
         ]);
 
         // Comparaison stricte : null distinct de 0, et 5 == 5.00 (floatval)
@@ -130,7 +174,10 @@ class ProductController extends Controller
         $newThreshold = $request->input('stock_threshold') === null ? null : floatval($request->input('stock_threshold'));
         $thresholdChanged = $oldThreshold !== $newThreshold;
 
-        $product->update($request->only(['name', 'unit', 'sku', 'category', 'price', 'stock_threshold', 'is_active']));
+        $product->update($request->only(['name', 'unit', 'sku', 'category', 'price', 'stock_threshold', 'pack_size', 'is_active']));
+
+        // Nouvelle photo : remplacer l'ancienne
+        $this->storeProductImage($request, $product);
 
         // Seuil modifié : recalculer l'alerte entrepôt
         if ($thresholdChanged) {
@@ -167,6 +214,63 @@ class ProductController extends Controller
     }
 
     /**
+     * Stocke la photo du produit : fichier multipart (web) ou base64 (mobile).
+     * Remplace l'ancienne photo si elle existe.
+     */
+    private function storeProductImage(Request $request, Product $product): void
+    {
+        // 1) Fichier multipart classique (site web)
+        if ($request->hasFile('image')) {
+            if ($product->image_path) {
+                Storage::disk('products')->delete($product->image_path);
+            }
+            $path = Storage::disk('products')->putFile('products', $request->file('image'));
+            $product->update(['image_path' => $path]);
+            return;
+        }
+
+        // 2) Base64 (application mobile) — évite les problèmes d'envoi multipart
+        if (!$request->filled('image_base64')) {
+            return;
+        }
+
+        $data = $request->input('image_base64');
+        // Préfixe éventuel "data:image/jpeg;base64,"
+        if (str_contains($data, ',')) {
+            $data = explode(',', $data, 2)[1];
+        }
+
+        $bin = base64_decode($data, true);
+        if ($bin === false || strlen($bin) > 5 * 1024 * 1024) {
+            throw ValidationException::withMessages([
+                'image_base64' => ['Image invalide ou trop volumineuse (max 5 Mo).'],
+            ]);
+        }
+
+        $mime = (new \finfo(FILEINFO_MIME_TYPE))->buffer($bin);
+        $extensions = [
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            'image/avif' => 'avif',
+            'image/gif' => 'gif',
+            'image/bmp' => 'bmp',
+        ];
+        if (!isset($extensions[$mime])) {
+            throw ValidationException::withMessages([
+                'image_base64' => ["Le fichier envoyé n'est pas une image valide (JPG/JPEG, PNG, WebP, AVIF, GIF ou BMP acceptés). Si votre fichier est un SVG ou un fichier renommé, convertissez-le d'abord en photo."],
+            ]);
+        }
+
+        if ($product->image_path) {
+            Storage::disk('products')->delete($product->image_path);
+        }
+        $path = 'products/' . uniqid('', true) . '.' . $extensions[$mime];
+        Storage::disk('products')->put($path, $bin);
+        $product->update(['image_path' => $path]);
+    }
+
+    /**
      * Formatage du prix avec la monnaie du forfait fournisseur.
      */
     private function formatPrice(?Supplier $supplier, $price): string
@@ -187,6 +291,11 @@ class ProductController extends Controller
         StockAlert::where('product_id', $product->id)
             ->whereNull('resolved_at')
             ->update(['resolved_at' => now()]);
+
+        // Supprimer la photo du produit
+        if ($product->image_path) {
+            Storage::disk('products')->delete($product->image_path);
+        }
 
         $product->delete();
 

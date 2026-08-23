@@ -119,6 +119,35 @@ class WarehouseStockEntry extends Model
     }
 
     /**
+     * Vente comptoir (client sans compte) : déduit la quantité du stock entrepôt.
+     * Même comportement qu'une livraison, mais type 'sale' pour l'historique.
+     */
+    public static function applyWalkInSale(int $supplierId, int $productId, float $quantity, ?int $userId, string $note): Product
+    {
+        $product = Product::where('id', $productId)
+            ->where('supplier_id', $supplierId)
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $product->stock_quantity = bcsub((string) $product->stock_quantity, self::num($quantity), 2);
+        $product->save();
+
+        self::create([
+            'product_id' => $product->id,
+            'supplier_id' => $supplierId,
+            'quantity' => '-' . self::num($quantity),
+            'note' => $note,
+            'entry_type' => 'sale',
+            'entered_by_user_id' => $userId,
+            'entry_date' => now()->toDateString(),
+        ]);
+
+        StockAlert::syncWarehouseAlert($product);
+
+        return $product;
+    }
+
+    /**
      * Correction du total : fixe le stock à la valeur indiquée.
      * L'entrée enregistre le delta signé pour garder l'invariant
      * stock_quantity = SUM(quantity).

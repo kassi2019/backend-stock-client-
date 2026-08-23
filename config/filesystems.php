@@ -53,6 +53,15 @@ return [
             'throw' => false,
         ],
 
+        // Photos des produits : stockées directement dans public/ (servies sans storage:link)
+        'products' => [
+            'driver' => 'local',
+            'root' => public_path(),
+            'url' => env('APP_URL').'/products',
+            'visibility' => 'public',
+            'throw' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

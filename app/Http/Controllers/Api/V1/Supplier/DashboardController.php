@@ -39,6 +39,7 @@ class DashboardController extends Controller
                             'id' => $cp->id,
                             'product_name' => $cp->product->name,
                             'unit' => $cp->product->unit,
+                            'image_path' => $cp->product->image_path,
                             'recu' => $recu,
                             'vendu' => max(0, $vendu),
                             'reste' => max(0, $reste),
@@ -65,6 +66,7 @@ class DashboardController extends Controller
                     'message' => $a->message,
                     'kind' => $a->product_id ? 'warehouse' : 'customer',
                     'product_name' => $a->product?->name ?? $a->customerProduct?->product?->name,
+                    'image_path' => $a->product?->image_path ?? $a->customerProduct?->product?->image_path,
                     'created_at' => $a->created_at?->toISOString(),
                 ];
             });
