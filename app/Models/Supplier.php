@@ -22,10 +22,14 @@ class Supplier extends Model
         'trial_ends_at',
         'subscription_ends_at',
         'settings',
+        'latitude',
+        'longitude',
     ];
 
     protected $casts = [
         'settings' => 'array',
+        'latitude' => 'float',
+        'longitude' => 'float',
         'trial_ends_at' => 'datetime',
         'subscription_ends_at' => 'datetime',
     ];

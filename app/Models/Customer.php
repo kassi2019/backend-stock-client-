@@ -21,10 +21,15 @@ class Customer extends Model
         'notes',
         'default_frequency',
         'is_active',
+        'shop_image_path',
+        'latitude',
+        'longitude',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'latitude' => 'float',
+        'longitude' => 'float',
     ];
 
     // --- Scopes ---

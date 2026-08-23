@@ -9,9 +9,11 @@ use App\Models\Product;
 use App\Models\Supplier;
 use App\Models\User;
 use App\Models\WarehouseStockEntry;
+use App\Support\Base64Image;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 
@@ -275,6 +277,75 @@ class CustomerController extends Controller
             'message' => count($rows) . ' produit(s) rattaché(s).',
             'attached' => $rows->pluck('product_id'),
         ], 201);
+    }
+
+    /**
+     * Données pour la carte des clients : magasins localisés + produits
+     * rattachés avec les quantités restantes (affichées au clic sur un point).
+     */
+    public function mapData(Request $request)
+    {
+        $supplierId = $request->input('_tenant_supplier_id');
+
+        $customers = Customer::forSupplier($supplierId)
+            ->whereNotNull('latitude')
+            ->with('customerProducts.product')
+            ->orderBy('name')
+            ->get()
+            ->map(fn ($c) => [
+                'id' => $c->id,
+                'name' => $c->name,
+                'contact_name' => $c->contact_name,
+                'phone' => $c->phone,
+                'email' => $c->email,
+                'address' => $c->address,
+                'default_frequency' => $c->default_frequency,
+                'shop_image_path' => $c->shop_image_path,
+                'latitude' => $c->latitude,
+                'longitude' => $c->longitude,
+                'products' => $c->customerProducts->map(fn ($cp) => [
+                    'name' => $cp->product?->name ?? '—',
+                    'unit' => $cp->product?->unit ?? '',
+                    'remaining' => floatval($cp->current_stock),
+                ])->values(),
+            ]);
+
+        return response()->json($customers);
+    }
+
+    /**
+     * Localisation du magasin du client : photo + coordonnées GPS (capture mobile).
+     */
+    public function storeLocation(Request $request, $customerId)
+    {
+        $supplierId = $request->input('_tenant_supplier_id');
+
+        $request->validate([
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+            'photo_base64' => 'nullable|string',
+        ]);
+
+        $customer = Customer::forSupplier($supplierId)->findOrFail($customerId);
+
+        $data = [
+            'latitude' => $request->latitude,
+            'longitude' => $request->longitude,
+        ];
+
+        if ($request->filled('photo_base64')) {
+            if ($customer->shop_image_path) {
+                Storage::disk('products')->delete($customer->shop_image_path);
+            }
+            $data['shop_image_path'] = Base64Image::store($request->input('photo_base64'), 'shops');
+        }
+
+        $customer->update($data);
+
+        return response()->json([
+            'message' => 'Magasin localisé.',
+            'customer' => $customer->only(['id', 'name', 'shop_image_path', 'latitude', 'longitude']),
+        ]);
     }
 
     /**

@@ -21,7 +21,9 @@ use App\Http\Controllers\Api\V1\Admin\AdminController as AdminAdminController;
 use App\Http\Controllers\Api\V1\Supplier\NotificationController;
 use App\Http\Controllers\Api\V1\Supplier\OrderController as SupplierOrderController;
 use App\Http\Controllers\Api\V1\Supplier\ResubscribeController;
+use App\Http\Controllers\Api\V1\Supplier\SupplierLocationController;
 use App\Http\Controllers\Api\V1\Supplier\WalkInSaleController;
+use App\Http\Controllers\Api\V1\Client\ClientLocationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -69,6 +71,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
         Route::delete('/stock-entries/{entry}', [ClientStockEntryController::class, 'destroy']);
 
         // Commandes
+        Route::post('/location', [ClientLocationController::class, 'store']);
         Route::get('/orders', [ClientOrderController::class, 'index']);
         Route::post('/orders', [ClientOrderController::class, 'store']);
         Route::get('/orders/{order}', [ClientOrderController::class, 'show']);
@@ -116,6 +119,9 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
         Route::post('/warehouse-stock/{product}/adjust', [SupplierWarehouseStockController::class, 'adjust']);
         Route::get('/warehouse-stock/{product}/history', [SupplierWarehouseStockController::class, 'history']);
         Route::post('/walk-in-sales', [WalkInSaleController::class, 'store']);
+        Route::post('/location', [SupplierLocationController::class, 'store']);
+        Route::post('/customers/{customer}/location', [CustomerController::class, 'storeLocation']);
+        Route::get('/customers-map', [CustomerController::class, 'mapData']);
 
         // Commandes (pending-count et pending-deliveries AVANT {order} pour éviter le conflit de binding)
         Route::get('/orders/pending-count', [SupplierOrderController::class, 'pendingCount']);
