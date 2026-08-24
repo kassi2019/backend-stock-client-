@@ -27,7 +27,7 @@ class OrderController extends Controller
         $supplierId = $request->input('_tenant_supplier_id');
 
         $orders = Order::forSupplier($supplierId)
-            ->with(['items', 'customer:id,name,phone'])
+            ->with(['items.product', 'customer:id,name,phone'])
             ->when($request->status, fn($q) => $q->where('status', $request->status))
             ->orderBy('created_at', 'desc')
             ->paginate(50);

@@ -20,7 +20,7 @@ class CatalogController extends Controller
         $products = Product::forSupplier($supplierId)
             ->where('is_active', true)
             ->orderBy('name')
-            ->get(['id', 'name', 'unit', 'category', 'sku', 'price'])
+            ->get(['id', 'name', 'unit', 'category', 'sku', 'price', 'image_path'])
             ->map(fn ($p) => [
                 'id' => $p->id,
                 'name' => $p->name,
@@ -28,6 +28,7 @@ class CatalogController extends Controller
                 'category' => $p->category,
                 'sku' => $p->sku,
                 'price' => $p->price === null ? null : floatval($p->price),
+                'image_path' => $p->image_path,
             ]);
 
         return response()->json([

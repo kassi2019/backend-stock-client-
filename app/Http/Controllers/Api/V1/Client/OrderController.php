@@ -182,6 +182,9 @@ class OrderController extends Controller
             ->orderBy('created_at', 'desc')
             ->paginate(50);
 
+        // Formater comme le détail : articles avec photo, sous-totaux, total
+        $orders->getCollection()->transform(fn ($o) => $this->formatOrder($o));
+
         return response()->json($orders);
     }
 

@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\Auth\PushTokenController;
 use App\Http\Controllers\Api\V1\Client\CatalogController as ClientCatalogController;
 use App\Http\Controllers\Api\V1\Client\DashboardController as ClientDashboardController;
 use App\Http\Controllers\Api\V1\Client\OrderController as ClientOrderController;
+use App\Http\Controllers\Api\V1\Client\OrderSuggestionController;
 use App\Http\Controllers\Api\V1\Client\StockEntryController as ClientStockEntryController;
 use App\Http\Controllers\Api\V1\Supplier\DashboardController as SupplierDashboardController;
 use App\Http\Controllers\Api\V1\Supplier\ProductController;
@@ -72,6 +73,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
         // Commandes
         Route::post('/location', [ClientLocationController::class, 'store']);
+        Route::get('/order-suggestions', [OrderSuggestionController::class, 'index']);
         Route::get('/orders', [ClientOrderController::class, 'index']);
         Route::post('/orders', [ClientOrderController::class, 'store']);
         Route::get('/orders/{order}', [ClientOrderController::class, 'show']);
