@@ -133,6 +133,103 @@ class ProductController extends Controller
         return response()->json($product);
     }
 
+    /**
+     * Import groupé de produits (fichier Excel/CSV analysé côté client).
+     * Chaque ligne est validée indépendamment : les erreurs sont renvoyées
+     * sans bloquer l'import des lignes valides.
+     */
+    public function bulkStore(Request $request)
+    {
+        $supplierId = $request->input('_tenant_supplier_id');
+        $supplier = \App\Models\Supplier::find($supplierId);
+
+        $request->validate([
+            'products' => 'required|array|min:1|max:500',
+            // Le nom est validé ligne par ligne : une ligne sans nom devient
+            // une erreur listée sans bloquer l'import des autres lignes.
+            'products.*.name' => 'nullable|string|max:191',
+            'products.*.unit' => 'nullable|string|max:30',
+            'products.*.sku' => 'nullable|string|max:100',
+            'products.*.category' => 'nullable|string|max:100',
+            'products.*.price' => 'nullable|numeric|min:0|max:99999999.99',
+            'products.*.stock_threshold' => 'nullable|numeric|min:0|max:99999999.99',
+            'products.*.pack_size' => 'nullable|integer|min:2|max:10000',
+        ]);
+
+        $maxProducts = $supplier->plan?->max_products;
+        $currentCount = Product::forSupplier($supplierId)->count();
+        $remainingQuota = $maxProducts === null ? null : max(0, $maxProducts - $currentCount);
+
+        if ($remainingQuota !== null && $remainingQuota <= 0) {
+            return response()->json([
+                'message' => "Quota atteint : maximum {$maxProducts} produits (plan {$supplier->plan->name}).",
+            ], 403);
+        }
+
+        $imported = 0;
+        $errors = [];
+        $importedProducts = [];
+
+        foreach ($request->products as $index => $row) {
+            $line = $index + 1;
+            $name = trim($row['name'] ?? '');
+            if ($name === '') {
+                $errors[] = ['line' => $line, 'message' => 'Nom manquant.'];
+                continue;
+            }
+
+            // Doublon dans la base : ignorer la ligne (pas bloquant)
+            if (Product::forSupplier($supplierId)->where('name', $name)->exists()) {
+                $errors[] = ['line' => $line, 'message' => "« {$name} » existe déjà — ligne ignorée."];
+                continue;
+            }
+
+            // Quota : ne pas dépasser
+            if ($remainingQuota !== null && $imported >= $remainingQuota) {
+                $errors[] = ['line' => $line, 'message' => "Quota atteint : maximum {$maxProducts} produits."];
+                continue;
+            }
+
+            $product = Product::create([
+                'supplier_id' => $supplierId,
+                'name' => $name,
+                'unit' => trim($row['unit'] ?? '') ?: 'pièce',
+                'sku' => $row['sku'] ?? null,
+                'category' => $row['category'] ?? null,
+                'price' => $row['price'] ?? null,
+                'stock_threshold' => $row['stock_threshold'] ?? null,
+                'pack_size' => $row['pack_size'] ?? null,
+            ]);
+
+            $imported++;
+            $importedProducts[] = $product;
+
+            // Seuil renseigné : alerte entrepôt immédiate (stock 0)
+            if ($product->stock_threshold !== null) {
+                DB::transaction(function () use ($product) {
+                    $locked = Product::where('id', $product->id)->lockForUpdate()->first();
+                    StockAlert::syncWarehouseAlert($locked);
+                });
+            }
+
+            // Nouveau produit au catalogue (avec prix) : notifier les clients
+            if ($product->price !== null) {
+                Supplier::notifyClients($supplier, new ProductNotification(
+                    'product_created',
+                    $product->id,
+                    'Nouveau produit au catalogue',
+                    "Le produit « {$product->name} » est disponible au prix de {$this->formatPrice($supplier, $product->price)}.",
+                ));
+            }
+        }
+
+        return response()->json([
+            'message' => "{$imported} produit(s) importé(s).",
+            'imported' => $imported,
+            'errors' => $errors,
+        ], 201);
+    }
+
     public function update(Request $request, $id)
     {
         $supplierId = $request->input('_tenant_supplier_id');

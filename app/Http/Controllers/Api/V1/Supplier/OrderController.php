@@ -205,6 +205,7 @@ class OrderController extends Controller
                     'customer_id' => $cp->customer_id,
                     'supplier_id' => $supplierId,
                     'quantity' => $qty,
+                    'unit_price' => $item->unit_price,
                     'note' => "Commande #{$order->id} (livraison partielle)",
                     'entry_type' => 'delivery',
                     'source' => 'supplier',

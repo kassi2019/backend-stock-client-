@@ -269,8 +269,27 @@ class CustomerController extends Controller
             ], 422);
         }
 
-        DB::transaction(function () use ($rows) {
-            CustomerProduct::insert($rows->all());
+        // Prix au moment du rattachement (pour le calcul du crédit client)
+        $prices = Product::whereIn('id', $validIds)->pluck('price', 'id');
+
+        DB::transaction(function () use ($rows, $customerId, $supplierId, $prices, $request) {
+            foreach ($rows as $row) {
+                $cp = CustomerProduct::create($row);
+
+                // La livraison initiale entre dans le crédit du client
+                \App\Models\StockEntry::create([
+                    'customer_product_id' => $cp->id,
+                    'customer_id' => $customerId,
+                    'supplier_id' => $supplierId,
+                    'quantity' => $row['initial_stock'],
+                    'unit_price' => $prices[$row['product_id']] ?? null,
+                    'note' => 'Rattachement produit',
+                    'entry_type' => 'delivery',
+                    'source' => 'supplier',
+                    'entered_by_user_id' => $request->user()->id,
+                    'entry_date' => now()->toDateString(),
+                ]);
+            }
         });
 
         return response()->json([
@@ -396,6 +415,7 @@ class CustomerController extends Controller
                 'customer_id' => $cp->customer_id,
                 'supplier_id' => $supplierId,
                 'quantity' => $qty,
+                'unit_price' => $cp->product?->price,
                 'note' => $request->note ?? 'Livraison fournisseur',
                 'entry_type' => 'delivery',
                 'source' => 'supplier',

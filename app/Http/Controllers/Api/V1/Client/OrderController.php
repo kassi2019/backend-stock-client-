@@ -282,6 +282,7 @@ class OrderController extends Controller
                     'customer_id' => $customerId,
                     'supplier_id' => $supplierId,
                     'quantity' => $remaining,
+                    'unit_price' => $item->unit_price,
                     'note' => "Commande #{$order->id}",
                     'entry_type' => 'delivery',
                     'source' => 'supplier',

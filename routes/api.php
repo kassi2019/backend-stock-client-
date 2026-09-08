@@ -16,6 +16,9 @@ use App\Http\Controllers\Api\V1\Supplier\CustomerController;
 use App\Http\Controllers\Api\V1\Supplier\StockEntryController as SupplierStockEntryController;
 use App\Http\Controllers\Api\V1\Supplier\WarehouseStockController as SupplierWarehouseStockController;
 use App\Http\Controllers\Api\V1\Supplier\UnitController;
+use App\Http\Controllers\Api\V1\Supplier\ProductCategoryController;
+use App\Http\Controllers\Api\V1\Supplier\FinanceController;
+use App\Http\Controllers\Api\V1\Supplier\PaymentController;
 use App\Http\Controllers\Api\V1\Admin\SupplierController as AdminSupplierController;
 use App\Http\Controllers\Api\V1\Admin\PlanController as AdminPlanController;
 use App\Http\Controllers\Api\V1\Admin\AdminController as AdminAdminController;
@@ -24,6 +27,7 @@ use App\Http\Controllers\Api\V1\Supplier\OrderController as SupplierOrderControl
 use App\Http\Controllers\Api\V1\Supplier\ResubscribeController;
 use App\Http\Controllers\Api\V1\Supplier\SupplierLocationController;
 use App\Http\Controllers\Api\V1\Supplier\WalkInSaleController;
+use App\Http\Controllers\Api\V1\Supplier\WalkInCreditSaleController;
 use App\Http\Controllers\Api\V1\Client\ClientLocationController;
 
 /*
@@ -87,11 +91,18 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
         // Produits
         Route::apiResource('/products', ProductController::class);
+        Route::post('/products/bulk', [ProductController::class, 'bulkStore']);
 
         // Unités paramétrables
         Route::get('/units', [UnitController::class, 'index']);
         Route::post('/units', [UnitController::class, 'store']);
         Route::delete('/units/{unit}', [UnitController::class, 'destroy']);
+        Route::get('/categories', [ProductCategoryController::class, 'index']);
+        Route::post('/categories', [ProductCategoryController::class, 'store']);
+        Route::delete('/categories/{category}', [ProductCategoryController::class, 'destroy']);
+        Route::get('/finances', [FinanceController::class, 'index']);
+        Route::get('/customers/{customer}/payments', [PaymentController::class, 'index']);
+        Route::post('/customers/{customer}/payments', [PaymentController::class, 'store']);
 
         // Clients
         Route::apiResource('/customers', CustomerController::class);
@@ -121,6 +132,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
         Route::post('/warehouse-stock/{product}/adjust', [SupplierWarehouseStockController::class, 'adjust']);
         Route::get('/warehouse-stock/{product}/history', [SupplierWarehouseStockController::class, 'history']);
         Route::post('/walk-in-sales', [WalkInSaleController::class, 'store']);
+        Route::post('/walk-in-credit-sales', [WalkInCreditSaleController::class, 'store']);
         Route::post('/location', [SupplierLocationController::class, 'store']);
         Route::post('/customers/{customer}/location', [CustomerController::class, 'storeLocation']);
         Route::get('/customers-map', [CustomerController::class, 'mapData']);

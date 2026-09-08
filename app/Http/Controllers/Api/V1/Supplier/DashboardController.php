@@ -96,8 +96,12 @@ class DashboardController extends Controller
             })
             ->count();
 
+        // Crédit total (valeur livrée − encaissements, tous clients confondus)
+        $financeSummary = (new FinanceController())->summary($supplierId);
+
         return response()->json([
             'summary' => [
+                'total_credit' => $financeSummary['total_credit'],
                 'total_customers' => $totalCustomers,
                 'total_products' => $totalProducts,
                 'low_stock_count' => $lowStockCount,
